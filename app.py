@@ -8,7 +8,7 @@ from utils.reports import (
     stock_movement_chart,
     inventory_log_view,
     database_explorer,
-    inventory_navigation
+    inventory_navigation,
 )
 
 # ---------- INITIAL SETUP ----------
