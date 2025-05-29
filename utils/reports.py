@@ -32,17 +32,13 @@ def generate_invoice_pdf(df, product_name, batch_id, username, business_id):
     pdf.cell(200, 10, txt=f"Product: {product_name} | Batch: {batch_id}", ln=True, align='C')
     pdf.cell(200, 10, txt=f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=True, align='C')
     pdf.ln(10)
-    headers = ['Timestamp', 'Stock In', 'Stock Out', 'Total Units', 'Total Price']
+    headers = ['id', 'product_id', 'timestamp_in', 'timestamp_out', 'product_name', 'batch_id', 'cumulative_stock', 'stock_in', 'stock_out', 'total_stock', 'unit_price', 'total_price', 'cumulative_value', 'expiration_date', 'username', 'business_id']
     for header in headers:
         pdf.cell(38, 10, header, border=1)
     pdf.ln()
     for _, row in df.iterrows():
-        timestamp = row.get("timestamp_in") or row.get("timestamp_out")
-        pdf.cell(38, 10, str(timestamp)[:19], border=1)
-        pdf.cell(38, 10, str(row.get("stock_in", "")), border=1)
-        pdf.cell(38, 10, str(row.get("stock_out", "")), border=1)
-        pdf.cell(38, 10, str(row.get("total_units", "")), border=1)
-        pdf.cell(38, 10, f"${row.get('total_price', 0):.2f}", border=1)
+        for header in headers:
+            pdf.cell(38, 10, str(row.get(header, ""))[:19] if 'timestamp' in header else str(row.get(header, "")), border=1)
         pdf.ln()
     pdf.cell(0, 10, txt="Thank you for using Inventory Manager!", ln=True, align='C')
     temp_dir = tempfile.gettempdir()
@@ -52,6 +48,9 @@ def generate_invoice_pdf(df, product_name, batch_id, username, business_id):
 
 def stock_movement_chart(df):
     st.subheader("📈 Stock Movement Over Time")
+    if df.empty:
+        st.info("No inventory data to display.")
+        return
     df['timestamp'] = pd.to_datetime(df['timestamp_in'].fillna(df['timestamp_out']), errors='coerce')
     selected_product = st.selectbox("Product for Movement Chart", df['product_name'].unique())
     filtered = df[df['product_name'] == selected_product]
@@ -65,13 +64,29 @@ def stock_movement_chart(df):
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=filtered['timestamp'], y=filtered['stock_in'], mode='lines+markers', name='Stock In'))
     fig.add_trace(go.Scatter(x=filtered['timestamp'], y=filtered['stock_out'], mode='lines+markers', name='Stock Out'))
-    fig.add_trace(go.Scatter(x=filtered['timestamp'], y=filtered['cumulative_stock'], mode='lines+markers', name='Net Stock'))
+    fig.add_trace(go.Scatter(x=filtered['timestamp'], y=filtered['cumulative_stock'], mode='lines+markers', name='Cumulative Stock'))
 
     fig.update_layout(title=f"Stock Movement for {selected_product} - {selected_batch}", xaxis_title="Date", yaxis_title="Units")
     st.plotly_chart(fig, use_container_width=True)
 
 def inventory_log_view(df):
     st.subheader("📋 Editable Inventory Log")
+
+    df = df.sort_values(by=['product_name', 'batch_id', 'timestamp_in', 'timestamp_out'], ascending=True).reset_index(drop=True)
+    df['cumulative_stock'] = 0
+    df['cumulative_value'] = 0.0
+
+    grouped = df.groupby(['product_name', 'batch_id'])
+
+    for (product, batch), group in grouped:
+        cumulative = 0
+        for idx in group.index:
+            stock_in = df.at[idx, 'stock_in'] or 0
+            stock_out = df.at[idx, 'stock_out'] or 0
+            unit_price = df.at[idx, 'unit_price'] or 0
+            cumulative += stock_in - stock_out
+            df.at[idx, 'cumulative_stock'] = cumulative
+            df.at[idx, 'cumulative_value'] = cumulative * unit_price
 
     edited_df = st.data_editor(df, use_container_width=True, num_rows="dynamic")
 
@@ -88,6 +103,7 @@ def inventory_log_view(df):
                         stock_in = ?,
                         stock_out = ?,
                         total_stock = ?,
+                        cumulative_stock = ?,
                         unit_price = ?,
                         quantity = ?,
                         total_price = ?,
@@ -96,7 +112,8 @@ def inventory_log_view(df):
                     WHERE id = ?
                 """, (
                     row["product_name"], row["batch_id"], row["stock_in"], row["stock_out"],
-                    row["total_stock"], row["unit_price"], row["quantity"], row["total_price"],
+                    row["total_stock"], row.get("cumulative_stock", 0),
+                    row["unit_price"], row["quantity"], row["total_price"],
                     row["total_units"], row["expiration_date"], row["id"]
                 ))
 
@@ -113,43 +130,34 @@ def inventory_log_view(df):
         "text/csv"
     )
 
-def show_product_summary(df):
-    st.subheader("📦 Products Registered Summary")
-    if df.empty:
-        st.info("No product data available.")
-        return
-
-    summary = (
-        df.groupby(['product_id', 'product_name', 'batch_id'])
-        .agg(
-            total_units_accu=pd.NamedAgg(column='total_units', aggfunc='sum'),
-            stock_in=pd.NamedAgg(column='stock_in', aggfunc='sum'),
-            stock_out=pd.NamedAgg(column='stock_out', aggfunc='sum'),
-            total_stock=pd.NamedAgg(column='total_stock', aggfunc='last'),
-            unit_price=pd.NamedAgg(column='unit_price', aggfunc='last'),
-            total_price=pd.NamedAgg(column='total_price', aggfunc='sum'),
-            expiration_date=pd.NamedAgg(column='expiration_date', aggfunc='last'),
-            username=pd.NamedAgg(column='username', aggfunc='last'),
-            business_id=pd.NamedAgg(column='business_id', aggfunc='last')
-        )
-        .reset_index()
-    )
-
-    st.dataframe(summary, use_container_width=True)
-    st.download_button(
-        "⬇ Download Product Summary CSV",
-        summary.to_csv(index=False).encode(),
-        "products_registered_summary.csv",
-        "text/csv"
-    )
-
 def database_explorer():
+    st.subheader("🧮 Database Viewer")
     conn = sqlite3.connect("data/inventory.db")
-    table_choice = st.selectbox("View Table", ["inventory", "users"])
+    table_choice = st.selectbox("Select Table to View", ["inventory", "users"])
     df = pd.read_sql(f"SELECT * FROM {table_choice}", conn)
     st.dataframe(df, use_container_width=True)
-    st.download_button(f"⬇ Download {table_choice}.csv", df.to_csv(index=False).encode(), f"{table_choice}.csv", "text/csv")
+    st.download_button(
+        f"⬇ Download {table_choice}.csv",
+        df.to_csv(index=False).encode(),
+        f"{table_choice}.csv",
+        "text/csv"
+    )
     conn.close()
+
+def inventory_navigation(df):
+    st.subheader("📦 Inventory Records Navigation")
+    if df.empty:
+        st.warning("No inventory data to display.")
+        return
+
+    df = df.sort_values(by=['product_name', 'batch_id', 'timestamp_in'], ascending=True)
+    grouped = df.groupby(['product_id', 'product_name', 'batch_id'])
+
+    for (prod_id, prod_name, batch_id), group in grouped:
+        st.markdown(f"### 🏷️ Product: {prod_name} | Batch: {batch_id} | ID: {prod_id}")
+        st.dataframe(group, use_container_width=True)
+        st.markdown("---")
+
 
 
 .
