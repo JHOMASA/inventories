@@ -8,16 +8,6 @@ import os
 import sqlite3
 from datetime import datetime
 
-# utils/reports.py
-import streamlit as st
-import pandas as pd
-import plotly.graph_objects as go
-from fpdf import FPDF
-import tempfile
-import os
-import sqlite3
-from datetime import datetime
-
 def pdf_invoice_section(df):
     st.subheader("📄 Generate Invoice PDF")
     if not df.empty:
@@ -47,22 +37,8 @@ def generate_invoice_pdf(df, product_name, batch_id, username, business_id):
         pdf.cell(38, 10, header, border=1)
     pdf.ln()
     for _, row in df.iterrows():
-        pdf.cell(38, 10, str(row.get("id", "")), border=1)
-        pdf.cell(38, 10, str(row.get("product_id", "")), border=1)
-        pdf.cell(38, 10, str(row.get("timestamp_in", ""))[:19], border=1)
-        pdf.cell(38, 10, str(row.get("timestamp_out", ""))[:19], border=1)
-        pdf.cell(38, 10, str(row.get("product_name", "")), border=1)
-        pdf.cell(38, 10, str(row.get("batch_id", "")), border=1)
-        pdf.cell(38, 10, str(row.get("cumulative_stock", "")), border=1)
-        pdf.cell(38, 10, str(row.get("stock_in", "")), border=1)
-        pdf.cell(38, 10, str(row.get("stock_out", "")), border=1)
-        pdf.cell(38, 10, str(row.get("total_stock", "")), border=1)
-        pdf.cell(38, 10, str(row.get("unit_price", "")), border=1)
-        pdf.cell(38, 10, str(row.get("total_price", "")), border=1)
-        pdf.cell(38, 10, str(row.get("cumulative_value", "")), border=1)
-        pdf.cell(38, 10, str(row.get("expiration_date", "")), border=1)
-        pdf.cell(38, 10, str(row.get("username", "")), border=1)
-        pdf.cell(38, 10, str(row.get("business_id", "")), border=1)
+        for header in headers:
+            pdf.cell(38, 10, str(row.get(header, ""))[:19] if 'timestamp' in header else str(row.get(header, "")), border=1)
         pdf.ln()
     pdf.cell(0, 10, txt="Thank you for using Inventory Manager!", ln=True, align='C')
     temp_dir = tempfile.gettempdir()
@@ -70,4 +46,33 @@ def generate_invoice_pdf(df, product_name, batch_id, username, business_id):
     pdf.output(file_path)
     return file_path
 
-# Remaining code (stock_movement_chart, inventory_log_view, show_product_summary, database_explorer) remains unchanged.
+def database_explorer():
+    st.subheader("🧮 Database Viewer")
+    conn = sqlite3.connect("data/inventory.db")
+    table_choice = st.selectbox("Select Table to View", ["inventory", "users"])
+    df = pd.read_sql(f"SELECT * FROM {table_choice}", conn)
+    st.dataframe(df, use_container_width=True)
+    st.download_button(
+        f"⬇ Download {table_choice}.csv",
+        df.to_csv(index=False).encode(),
+        f"{table_choice}.csv",
+        "text/csv"
+    )
+    conn.close()
+
+def inventory_navigation(df):
+    st.subheader("📦 Inventory Records Navigation")
+    if df.empty:
+        st.warning("No inventory data to display.")
+        return
+
+    df = df.sort_values(by=['product_name', 'batch_id', 'timestamp_in'], ascending=True)
+    grouped = df.groupby(['product_id', 'product_name', 'batch_id'])
+
+    for (prod_id, prod_name, batch_id), group in grouped:
+        st.markdown(f"### 🏷️ Product: {prod_name} | Batch: {batch_id} | ID: {prod_id}")
+        st.dataframe(group, use_container_width=True)
+        st.markdown("---")
+
+
+.
