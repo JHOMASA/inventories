@@ -11,7 +11,6 @@ from utils.reports import (
     inventory_navigation
 )
 
-
 # ---------- INITIAL SETUP ----------
 st.set_page_config(page_title="📦 Inventory Manager", layout="wide")
 create_tables()
