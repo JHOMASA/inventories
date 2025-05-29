@@ -1,5 +1,5 @@
-streamlit==1.45.1
-pandas==2.2.2
-plotly==6.1.2
-fpdf==1.7.2
-pytz==2025.2
+streamlit>=1.30.0
+pandas>=2.1.0
+plotly>=5.18.0
+fpdf>=1.7.2
+pytz>=2023.3
