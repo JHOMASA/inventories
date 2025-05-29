@@ -3,7 +3,13 @@ from utils.auth import login_section, register_section
 from utils.dashboard import show_dashboard
 from utils.database import create_tables, get_user_inventory
 from utils.alerts import show_expiration_alerts, show_low_stock_alerts
-from utils.reports import pdf_invoice_section, stock_movement_chart, inventory_log_view, database_explorer, inventory_navigation
+from utils.reports import (
+    pdf_invoice_section,
+    stock_movement_chart,
+    inventory_log_view,
+    database_explorer,
+    inventory_navigation
+)
 
 # ---------- INITIAL SETUP ----------
 st.set_page_config(page_title="📦 Inventory Manager", layout="wide")
