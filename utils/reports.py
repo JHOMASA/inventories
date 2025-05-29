@@ -31,7 +31,7 @@ def generate_invoice_pdf(df, product_name, batch_id, username, business_id):
     pdf.cell(200, 10, txt=f"Product: {product_name} | Batch: {batch_id}", ln=True, align='C')
     pdf.cell(200, 10, txt=f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=True, align='C')
     pdf.ln(10)
-    headers = ['Timestamp', 'Stock In', 'Stock Out', 'Total Units', 'Total Price']
+    headers = ['timestamp', 'stock_in', 'stock_out', 'total_stock_in', 'total_stock', 'cumulative_stock', 'total_price']
     for header in headers:
         pdf.cell(38, 10, header, border=1)
     pdf.ln()
@@ -40,7 +40,9 @@ def generate_invoice_pdf(df, product_name, batch_id, username, business_id):
         pdf.cell(38, 10, str(timestamp)[:19], border=1)
         pdf.cell(38, 10, str(row.get("stock_in", "")), border=1)
         pdf.cell(38, 10, str(row.get("stock_out", "")), border=1)
-        pdf.cell(38, 10, str(row.get("total_units", "")), border=1)
+        pdf.cell(38, 10, str(row.get("total_stock_in", "")), border=1)
+        pdf.cell(38, 10, str(row.get("total_stock", "")), border=1)
+        pdf.cell(38, 10, str(row.get("cumulative_stock", "")), border=1)
         pdf.cell(38, 10, f"${row.get('total_price', 0):.2f}", border=1)
         pdf.ln()
     pdf.cell(0, 10, txt="Thank you for using Inventory Manager!", ln=True, align='C')
@@ -64,13 +66,29 @@ def stock_movement_chart(df):
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=filtered['timestamp'], y=filtered['stock_in'], mode='lines+markers', name='Stock In'))
     fig.add_trace(go.Scatter(x=filtered['timestamp'], y=filtered['stock_out'], mode='lines+markers', name='Stock Out'))
-    fig.add_trace(go.Scatter(x=filtered['timestamp'], y=filtered['cumulative_stock'], mode='lines+markers', name='Net Stock'))
+    fig.add_trace(go.Scatter(x=filtered['timestamp'], y=filtered['cumulative_stock'], mode='lines+markers', name='Cumulative Stock'))
 
     fig.update_layout(title=f"Stock Movement for {selected_product} - {selected_batch}", xaxis_title="Date", yaxis_title="Units")
     st.plotly_chart(fig, use_container_width=True)
 
 def inventory_log_view(df):
     st.subheader("📋 Editable Inventory Log")
+
+    df = df.sort_values(by=['product_name', 'batch_id', 'timestamp_in', 'timestamp_out'], ascending=True).reset_index(drop=True)
+    df['cumulative_stock'] = 0
+    df['cumulative_value'] = 0.0
+
+    grouped = df.groupby(['product_name', 'batch_id'])
+
+    for (product, batch), group in grouped:
+        cumulative = 0
+        for idx in group.index:
+            stock_in = df.at[idx, 'stock_in'] or 0
+            stock_out = df.at[idx, 'stock_out'] or 0
+            unit_price = df.at[idx, 'unit_price'] or 0
+            cumulative += stock_in - stock_out
+            df.at[idx, 'cumulative_stock'] = cumulative
+            df.at[idx, 'cumulative_value'] = cumulative * unit_price
 
     edited_df = st.data_editor(df, use_container_width=True, num_rows="dynamic")
 
@@ -86,7 +104,9 @@ def inventory_log_view(df):
                         batch_id = ?,
                         stock_in = ?,
                         stock_out = ?,
+                        total_stock_in = ?,
                         total_stock = ?,
+                        cumulative_stock = ?,
                         unit_price = ?,
                         quantity = ?,
                         total_price = ?,
@@ -95,7 +115,8 @@ def inventory_log_view(df):
                     WHERE id = ?
                 """, (
                     row["product_name"], row["batch_id"], row["stock_in"], row["stock_out"],
-                    row["total_stock"], row["unit_price"], row["quantity"], row["total_price"],
+                    row.get("total_stock_in", 0), row["total_stock"], row.get("cumulative_stock", 0),
+                    row["unit_price"], row["quantity"], row["total_price"],
                     row["total_units"], row["expiration_date"], row["id"]
                 ))
 
@@ -118,26 +139,33 @@ def show_product_summary(df):
         st.info("No product data available.")
         return
 
-    summary = (
-        df.groupby(['product_id', 'product_name', 'batch_id'])
-        .agg(
-            total_units_accu=pd.NamedAgg(column='total_units', aggfunc='sum'),
-            stock_in=pd.NamedAgg(column='stock_in', aggfunc='sum'),
-            stock_out=pd.NamedAgg(column='stock_out', aggfunc='sum'),
-            total_stock=pd.NamedAgg(column='total_stock', aggfunc='last'),
-            unit_price=pd.NamedAgg(column='unit_price', aggfunc='last'),
-            total_price=pd.NamedAgg(column='total_price', aggfunc='sum'),
-            expiration_date=pd.NamedAgg(column='expiration_date', aggfunc='last'),
-            username=pd.NamedAgg(column='username', aggfunc='last'),
-            business_id=pd.NamedAgg(column='business_id', aggfunc='last')
-        )
-        .reset_index()
-    )
+    registered_products = df.drop_duplicates(subset=['product_id', 'product_name', 'batch_id'])
 
-    st.dataframe(summary, use_container_width=True)
+    editable_summary = st.data_editor(registered_products, use_container_width=True, num_rows="dynamic")
+
+    if st.button("💾 Save Product Modifications"):
+        try:
+            conn = sqlite3.connect("data/inventory.db")
+            cursor = conn.cursor()
+            for _, row in editable_summary.iterrows():
+                cursor.execute("""
+                    UPDATE inventory SET
+                        product_name = ?,
+                        batch_id = ?,
+                        unit_price = ?,
+                        expiration_date = ?
+                    WHERE product_id = ?
+                """, (
+                    row["product_name"], row["batch_id"], row["unit_price"], row["expiration_date"], row["product_id"]))
+            conn.commit()
+            conn.close()
+            st.success("✅ Product modifications saved.")
+        except Exception as e:
+            st.error(f"❌ Failed to save product changes: {e}")
+
     st.download_button(
         "⬇ Download Product Summary CSV",
-        summary.to_csv(index=False).encode(),
+        editable_summary.to_csv(index=False).encode(),
         "products_registered_summary.csv",
         "text/csv"
     )
